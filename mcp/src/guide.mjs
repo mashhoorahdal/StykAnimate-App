@@ -8,8 +8,9 @@ Workflow: build_animation → preview_frames (look, fix, rebuild) → export_vid
 ## Canvas and time
 - Default canvas 540×960 (vertical 9:16). Export preset "shorts" scales it to 1080×1920 without loss (vectors).
 - Coordinates are canvas pixels; x grows right, y grows DOWN. Centre of the default canvas is (270, 480).
-- fps defaults to 24. A keyframe's "hold" is the number of frames until the next keyframe (12 = 0.5 s).
-  The last keyframe holds for its own "hold". Total length = sum of holds.
+- fps defaults to 24. A keyframe's "hold" is the number of frames spent MOVING to the next keyframe (12 = 0.5 s):
+  figures start changing as soon as they arrive. To pause on a pose, add "still": frames to stay put first.
+  The last keyframe holds for its own "hold". Total length = sum of holds and stills.
 - Motion between keyframes tweens automatically ("ease": ${Object.keys(EASINGS).join(', ')}; default auto).
   Use "constant" for an instant cut, "ease-out" for a snappy arrival.
 
@@ -62,7 +63,8 @@ ${Object.keys(POSES).join(', ')}
 ## Making it feel natural
 - Anticipate: before a big action, a small opposite move (crouch before jump, lean back before a throw), 4–6 frames.
 - Arrive with overshoot 0.2 on big gestures; never on tiny ones.
-- Hold key poses 8–14 frames so they read; keep tiny moves (talk_a ↔ talk_b, nod) going while a figure speaks.
+- Let key poses read: "still" 8–14 frames on important poses, and before a fade or a cut. Keep tiny moves
+  (talk_a ↔ talk_b, nod) going while a figure speaks.
 - Overlap: let figures react a few frames after each other, not all on the same keyframe.
 - Reading time: captions stay ~0.4 s per word, at least 1.2 s. Keep text inside the shot, and on Shorts away
   from the bottom 20% and the right edge (interface buttons).

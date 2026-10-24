@@ -198,8 +198,13 @@ export function compileSpec(spec, external = new Map()) {
     if (key.camera) camera = {x: width / 2, y: height / 2, zoom: 1, rotate: 0, ...camera, ...key.camera};
     const ease = key.ease ?? spec.ease ?? 'auto';
     if (!EASINGS[ease]) throw new Error(`keyframes[${index}].ease must be one of ${Object.keys(EASINGS).join(', ')}`);
-    records.push({index, hold, ease, background, camera, overshoot, settle: key.settle,
-      states: new Map([...visible].map(id => [id, states.get(id)]))});
+    const record = {index, hold, ease, background, camera, overshoot, settle: key.settle,
+      states: new Map([...visible].map(id => [id, states.get(id)]))};
+    const still = key.still ?? 0;
+    if (!Number.isInteger(still) || still < 0 || still > 65535) throw new Error(`keyframes[${index}].still must be a whole number of frames`);
+    // Staying still is a copy of the pose that the move to the next keyframe starts from.
+    if (still) records.push({...record, hold: still}, {...record, overshoot: new Map(), settle: undefined});
+    else records.push(record);
   };
   spec.keyframes.forEach((key, index) => {
     if (key.walk) for (const expanded of expandWalk(key, index, cast, figures, states)) resolve(expanded, index);

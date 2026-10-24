@@ -73,6 +73,7 @@ const spec = z.object({
   })).min(1).describe('Every figure in the animation; later members draw on top'),
   keyframes: z.array(z.object({
     hold: z.number().int().min(1).max(65535).optional().describe('Frames from this keyframe to the next (default 12 = 0.5 s at 24 fps). With walk: how long the closing stand lasts'),
+    still: z.number().int().min(0).max(65535).optional().describe('Frames to stay still after arriving, before the hold (the move to the next keyframe) starts'),
     settle: z.number().int().min(1).optional().describe('Frames an overshoot takes to settle (default 4)'),
     walk: z.object({
       figure: z.string(), to: z.number().describe('Target hip x'),

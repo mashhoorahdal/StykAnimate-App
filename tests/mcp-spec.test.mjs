@@ -159,3 +159,16 @@ test('eyes follow the head and the face direction, and mirror with flip', () => 
   assert.deepEqual(eyes(document.keyframes[1]), [55, 55], 'side: both on the facing side');
   assert.deepEqual(eyes(document.keyframes[2]), [180 - (POSES.nod.head + 145), 180 - (POSES.nod.head + 145)], 'nodding turns them; flip mirrors');
 });
+
+test('still keeps a pose before the move to the next keyframe starts', () => {
+  const {document, ticks} = compileSpec({cast, keyframes: [
+    {hold: 10, still: 6, figures: {bob: {x: 100, y: 300, pose: 'stand'}}},
+    {hold: 4, figures: {bob: {x: 200}}},
+  ]});
+  assert.equal(ticks, 20);
+  const [arrive, leave, next] = document.keyframes;
+  assert.deepEqual([arrive.duration_raw, leave.duration_raw], [6, 10]);
+  assert.deepEqual(stickmanAt(arrive).angles, stickmanAt(leave).angles);
+  assert.equal(stickmanAt(leave).root_x, 100);
+  assert.equal(stickmanAt(next).root_x, 200);
+});
