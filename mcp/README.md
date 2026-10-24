@@ -60,29 +60,36 @@ converted to H.264/AAC with the system `ffmpeg`.
 
 ## Use
 
+One command registers the server with your coding agents. From the repository root, after
+[Build from source](../README.md#build-from-source):
+
 ```sh
-cd mcp
-npm ci
+node mcp/install.mjs              # list supported agents and which are installed
+node mcp/install.mjs all          # every agent found on this machine
+node mcp/install.mjs claude codex # or name them
 ```
 
-Register `node /path/to/StykAnimate-App/mcp/src/index.mjs` as a stdio server in your MCP client, for
-example:
+| Agent | id | How it is registered |
+| --- | --- | --- |
+| Claude Code | `claude` | `claude mcp add --scope user` |
+| Codex CLI | `codex` | `codex mcp add` |
+| Gemini CLI | `gemini` | `gemini mcp add --scope user`, or `~/.gemini/settings.json` without the CLI |
+| VS Code | `vscode` | `code --add-mcp` |
+| Cursor | `cursor` | `~/.cursor/mcp.json` |
+| opencode | `opencode` | `~/.config/opencode/opencode.json` |
+| Windsurf | `windsurf` | `~/.codeium/windsurf/mcp_config.json` |
+| Claude Desktop | `claude-desktop` | `claude_desktop_config.json` |
 
-```json
-{
-  "mcpServers": {
-    "stykanimate": {
-      "command": "node",
-      "args": ["/path/to/StykAnimate-App/mcp/src/index.mjs"],
-      "env": {"STYK_OUTPUT_DIR": "/path/to/videos"}
-    }
-  }
-}
-```
+The installer installs the server's own dependencies when they are missing and warns about other
+prerequisites. It registers absolute paths (including the Node executable), so apps started without your
+shell's `PATH` still find them. Config files are edited in place, keeping their other entries; a file with
+comments is left alone, with the entry to add by hand. Options: `--output <dir>` for videos (default
+`~/styk-videos`), `--name <name>` (default `stykanimate`), `--dry-run` to print what would change, and
+`--remove` to unregister. Restart the agent afterwards.
 
-Relative output paths resolve against `STYK_OUTPUT_DIR` (by default, the client's working
-directory). `STYK_APP_ROOT` points the server at another checkout of the app. `STYK_HEADED=1` shows
-the browser window while debugging.
+Any other MCP client can run `node /path/to/StykAnimate-App/mcp/src/index.mjs` as a stdio server with
+`STYK_OUTPUT_DIR` (where relative output paths resolve; by default the client's working directory) and, when
+the server runs from another location, `STYK_APP_ROOT`. `STYK_HEADED=1` shows the browser window while debugging.
 
 ## Checks
 

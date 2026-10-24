@@ -9,6 +9,7 @@
   "engines": {"node": ">=22"},
   "scripts": {
     "start": "node src/index.mjs",
+    "add-to-agents": "node install.mjs",
     "smoke": "node test/smoke.mjs",
     "test:mcp": "node test/mcp-client.mjs"
   },

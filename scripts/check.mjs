@@ -16,6 +16,7 @@ async function discover(directory) {
   }
 }
 for (const directory of ['src', 'desktop', 'scripts', 'tests', 'mcp/src', 'mcp/test']) await discover(directory);
+sources.push(path.join('mcp', 'install.mjs'));
 let failures = 0;
 for (const source of sources) {
   const result = spawnSync(process.execPath, ['--check', source], { cwd: appRoot, encoding: 'utf8', windowsHide: true });
