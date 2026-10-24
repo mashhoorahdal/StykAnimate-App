@@ -17,7 +17,9 @@ Workflow: build_animation → preview_frames (look, fix, rebuild) → export_vid
 Declare every figure once in "cast"; keyframes then say where each one is.
 - stickman: color, thickness (weight multiplier), headColor, headFilled. About 250 px tall at scale 1
   (hip to head top ≈ 122 px, hip to feet ≈ 125 px). scale 1.3 suits the 540×960 canvas.
-- line: length, thickness, color. Placed by its start point; good for floors and walls.
+- line: length, thickness, color. Placed by its start point; thick lines have round ends.
+- rect: width, height, color. Placed by its centre, with square corners; use it for walls, floors,
+  doors, windows, counters and boxes. Rotate turns it around its centre.
 - circle: radius, color, filled (default true). Placed by its centre.
 - text: text, fontSize, bold, italic, align, color, outline, outlineColor. Placed by its centre.
   Text cannot change; use one cast member per caption and hide/show them.

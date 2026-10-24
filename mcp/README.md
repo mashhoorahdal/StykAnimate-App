@@ -21,7 +21,7 @@ dependencies.
 | `export_video` | MP4, WebM or GIF; presets `shorts`, `youtube`, `tiktok`, `instagram`, `x`, `gif`, `best` |
 | `save_project` | Save as `.styk` |
 
-A spec declares the figures once (stickmen, lines, circles, text and `.stk` figures) and then lists
+A spec declares the figures once (stickmen, lines, rectangles, circles, text and `.stk` figures) and then lists
 keyframes that only say what changes. Keyframes tween with the app's easing modes. Each one can also
 move the camera or change the background. `stykanimate_guide` returns the full format.
 

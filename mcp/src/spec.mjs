@@ -33,6 +33,12 @@ const segment = (length, angle, thickness, extra = {}) => ({
 const definition = (figure_type_id, name, segments) =>
   ({figure_type_id, name, segment_count: segments.length, segments, polyfills: [], image_assets: [], text_assets: []});
 
+/** The offset from a rectangle's centre to its root (the start of its line), before scale and rotation. */
+const rectAnchor = figure => {
+  const {length, angle_rad} = figure.segments[0];
+  return angle_rad ? {x: 0, y: -length / 2} : {x: -length / 2, y: 0};
+};
+
 /** A figure definition for one cast member; text and file figures come from `external`. */
 function castDefinition(member, typeId, external) {
   const color = parseColor(member.color ?? '#2b2b2b', `${member.id}.color`);
@@ -54,6 +60,12 @@ function castDefinition(member, typeId, external) {
       return definition(typeId, member.id, [segment(diameter, -Math.PI / 2, filled ? 0 : member.thickness ?? 4, {
         ...staticSegment, color_rgb: color, primitive_code: filled ? 3 : 1, flags: filled ? 259 : 257,
         segment_type: 'circle', segment_kind: filled ? 'circleFill' : 'circle'})]);
+    }
+    case 'rect': {
+      // A square-capped line is a rectangle: its caps add half its thickness at each end.
+      const width = member.width ?? 100, height = member.height ?? 100, wide = width >= height;
+      return definition(typeId, member.id, [segment(Math.max(1, Math.abs(width - height)), wide ? 0 : Math.PI / 2, wide ? height : width,
+        {...staticSegment, color_rgb: color, primitive_code: 6, flags: 262, segment_kind: 'squareLine'})]);
     }
     case 'text': case 'file': {
       const figure = external.get(member.id)?.figure;
@@ -80,7 +92,7 @@ function placeObject(member, figure, uid, state, anchor) {
     if (state.flip) object.image_text_flags = 1;
     // A circle's root is its bottom; the spec places its centre.
     if (member.kind === 'circle') object.root_y += figure.segments[0].length / 2 * object.scale;
-    // A text's root is its bottom-left corner; the spec places its centre, which rotation turns around.
+    // Text and rectangle roots are not their centres; the spec places the centre, which rotation turns around.
     if (anchor) {
       const ax = (state.flip ? -anchor.x : anchor.x) * object.scale, ay = anchor.y * object.scale;
       object.root_x += ax * Math.cos(turn) - ay * Math.sin(turn);
@@ -132,6 +144,7 @@ export function compileSpec(spec, external = new Map()) {
   document.figure_types = cast.map((member, index) => castDefinition(member, index + 1, external));
   const figures = new Map(cast.map((member, index) => [member.id, document.figure_types[index]]));
   const uids = new Map(cast.map((member, index) => [member.id, index + 1]));
+  const anchors = new Map(cast.map(member => [member.id, member.kind === 'rect' ? rectAnchor(figures.get(member.id)) : external.get(member.id)?.anchor]));
 
   const backgrounds = new Map();
   const backgroundId = color => {
@@ -156,7 +169,7 @@ export function compileSpec(spec, external = new Map()) {
     if (key.background) background = key.background;
     if (key.camera) camera = {...camera, ...key.camera};
     const objects = cast.filter(member => visible.has(member.id))
-      .map(member => placeObject(member, figures.get(member.id), uids.get(member.id), states.get(member.id), external.get(member.id)?.anchor));
+      .map(member => placeObject(member, figures.get(member.id), uids.get(member.id), states.get(member.id), anchors.get(member.id)));
     const frame = createFrame(objects, hold);
     const easing = EASINGS[key.ease ?? spec.ease ?? 'auto'];
     if (!easing) throw new Error(`keyframes[${index}].ease must be one of ${Object.keys(EASINGS).join(', ')}`);

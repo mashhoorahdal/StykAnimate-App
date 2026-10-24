@@ -64,6 +64,18 @@ test('the circle is placed by its centre', () => {
   assert.equal(document.keyframes[0].objects[0].root_y, 120);
 });
 
+test('a rectangle is a square-capped line centred on its placement', () => {
+  const {document} = compileSpec({cast: [{id: 'wide', kind: 'rect', width: 200, height: 50}, {id: 'tall', kind: 'rect', width: 40, height: 100}],
+    keyframes: [{figures: {wide: {x: 300, y: 100}, tall: {x: 50, y: 400, scale: 2}}}]});
+  const [wide, tall] = document.figure_types.map(figure => figure.segments[0]);
+  assert.deepEqual([wide.segment_kind, wide.length, wide.thickness, wide.angle_rad], ['squareLine', 150, 50, 0]);
+  assert.deepEqual([tall.length, tall.thickness, tall.angle_rad], [60, 40, Math.PI / 2]);
+  const [first, second] = document.keyframes[0].objects;
+  // The caps add half the thickness at each end, so the line runs from x 225 to 375 for a 200 px wide box.
+  assert.deepEqual([first.root_x, first.root_y], [225, 100]);
+  assert.deepEqual([second.root_x, second.root_y], [50, 400 - 60]);
+});
+
 test('invalid specs explain the problem', () => {
   assert.throws(() => compileSpec({cast, keyframes: [{figures: {nobody: {}}}]}), /not in the cast/);
   assert.throws(() => compileSpec({cast, keyframes: [{figures: {bob: {pose: 'moonwalk'}}}]}), /Unknown pose/);

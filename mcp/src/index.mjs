@@ -26,7 +26,7 @@ const tool = (name, config, handler) => server.registerTool(name, config, args =
 
 const color = z.string().describe('Hex colour, e.g. "#222222" or "#f80"');
 const placement = z.object({
-  x: z.number().optional().describe('Horizontal position in canvas pixels (stickman: hip; circle and text: centre; line: start)'),
+  x: z.number().optional().describe('Horizontal position in canvas pixels (stickman: hip; rect, circle and text: centre; line: start)'),
   y: z.number().optional().describe('Vertical position in canvas pixels (y grows downward)'),
   ground: z.number().optional().describe('Stickman only: stand on this y, placing the lowest point of the pose there (use instead of y)'),
   pose: z.enum(Object.keys(POSES)).optional().describe('Stickman only: a library pose; omit to keep the previous pose'),
@@ -48,11 +48,13 @@ const spec = z.object({
   ease: z.enum(Object.keys(EASINGS)).optional().describe('Default motion between keyframes; default auto (smooth)'),
   cast: z.array(z.object({
     id: z.string().min(1).describe('Unique name used in keyframes'),
-    kind: z.enum(['stickman', 'line', 'circle', 'text', 'file']),
+    kind: z.enum(['stickman', 'line', 'rect', 'circle', 'text', 'file']),
     color: color.optional(),
     thickness: z.number().positive().optional().describe('stickman: line weight multiplier (default 1); line/circle outline: pixels'),
     headColor: color.optional(), headFilled: z.boolean().optional(),
     length: z.number().positive().optional().describe('line: length in pixels'),
+    width: z.number().positive().optional().describe('rect: width in pixels'),
+    height: z.number().positive().optional().describe('rect: height in pixels'),
     radius: z.number().positive().optional().describe('circle: radius in pixels'),
     filled: z.boolean().optional().describe('circle: filled (default) or outline'),
     text: z.string().optional().describe('text: the words; use \\n for line breaks. One cast member per caption'),
