@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {compileSpec, parseColor} from '../mcp/src/spec.mjs';
-import {POSES, resolveAngles} from '../mcp/src/rig.mjs';
+import {HANDLES, POSES, cycleAdvance, resolveAngles} from '../mcp/src/rig.mjs';
 
 const cast = [{id: 'floor', kind: 'line', length: 540}, {id: 'bob', kind: 'stickman'}, {id: 'ball', kind: 'circle', radius: 20}];
 const degrees = radians => Math.round(radians * 180 / Math.PI);
@@ -87,4 +87,75 @@ test('invalid specs explain the problem', () => {
 
 test('every library pose resolves every joint', () => {
   for (const name of Object.keys(POSES)) assert.equal(Object.values(resolveAngles({pose: name})).filter(Number.isFinite).length, 10, name);
+});
+
+const stickmanAt = (frame, uid = 2) => frame.objects.find(object => object.unique_id === uid);
+
+test('walk expands into a stride-matched cycle that faces the way it goes and ends standing', () => {
+  const {document, ticks} = compileSpec({cast, keyframes: [
+    {hold: 10, figures: {bob: {x: 400, ground: 700, pose: 'stand', scale: 1.2}}},
+    {walk: {figure: 'bob', to: 100, step: 5}, hold: 7, figures: {ball: {x: 10, y: 10}}},
+  ]});
+  const steps = Math.round(300 / cycleAdvance(document.figure_types[1], 'walk_contact_a', 1.2));
+  assert.equal(document.keyframes.length, 1 + steps + 1 + 1, 'start, one key per step, the stand and the closing key');
+  assert.equal(ticks, 10 + steps * 5 + 7);
+  const last = stickmanAt(document.keyframes[steps]), stand = stickmanAt(document.keyframes[steps + 1]);
+  assert.equal(last.root_x, 100, 'the last step lands exactly on the target');
+  assert.ok(Math.abs(Math.sin(stand.angles[0]) + 1) < 1e-9, 'it ends standing: the torso points straight up');
+  assert.equal(degrees(stickmanAt(document.keyframes[1]).angles[6]), 180 - 72, 'walking left mirrors the cycle (walk_pass_a thigh)');
+  assert.equal(document.keyframes[1].objects.length, 2, 'other figures change at the first step');
+  assert.equal(document.keyframes[1]._styk.easing.interpolation, 'linear');
+});
+
+test('bend sets an angle relative to the parent and carries the bones below; turn rotates a branch', () => {
+  const angles = resolveAngles({pose: 'stand', bend: {rightForearm: -90}, turn: {rightUpperArm: -30}});
+  assert.equal(angles.rightUpperArm, POSES.stand.rightUpperArm - 30);
+  assert.equal(angles.rightForearm, angles.rightUpperArm - 90, 'the forearm keeps its bend when the upper arm turns');
+  const leaned = resolveAngles({pose: 'stand', lean: 10});
+  assert.equal(leaned.head, POSES.stand.head + 10);
+  assert.equal(leaned.rightShin, POSES.stand.rightShin, 'legs do not lean');
+});
+
+test('attach joins a prop to a stickman handle in every keyframe until it lets go', () => {
+  const {document} = compileSpec({cast: [cast[1], {id: 'bag', kind: 'rect', width: 40, height: 50}], keyframes: [
+    {figures: {bob: {x: 100, y: 300}, bag: {attach: {to: 'bob', at: 'leftHand'}}}},
+    {figures: {bob: {x: 200}}},
+    {figures: {bag: {attach: null, x: 50, y: 60}}},
+  ]});
+  const bag = frame => frame.objects.find(object => object.unique_id === 2);
+  assert.deepEqual(bag(document.keyframes[0]).join, {target_object_slot: 0, target_unique_id: 1, target_handle_id: HANDLES.leftHand});
+  assert.ok(bag(document.keyframes[1]).join, 'the attachment carries over');
+  assert.equal(bag(document.keyframes[2]).join, null);
+  assert.throws(() => compileSpec({cast: [cast[1], {id: 'bag', kind: 'rect'}], keyframes: [
+    {figures: {bob: {x: 1, y: 1}, bag: {attach: {to: 'bob'}}}}, {figures: {bob: {hide: true}}}]}), /not on stage/);
+});
+
+test('overshoot passes the new pose, then settles while other figures keep moving', () => {
+  const {document, ticks} = compileSpec({cast, keyframes: [
+    {hold: 10, figures: {bob: {x: 100, y: 300, pose: 'stand'}, ball: {x: 0, y: 0}}},
+    {hold: 12, settle: 3, figures: {bob: {pose: 'arms_up', overshoot: 0.5}}},
+    {hold: 6, figures: {ball: {x: 120, y: 0}}},
+  ]});
+  assert.equal(ticks, 28, 'overshoot does not change the length');
+  const [, passed, settled] = document.keyframes;
+  assert.deepEqual([passed.duration_raw, settled.duration_raw], [3, 9]);
+  const arm = frame => degrees(stickmanAt(frame).angles[2]);
+  assert.equal(arm(passed), Math.round(POSES.arms_up.rightUpperArm + (POSES.arms_up.rightUpperArm - POSES.stand.rightUpperArm) * 0.5));
+  assert.equal(arm(settled), POSES.arms_up.rightUpperArm);
+  const ball = frame => frame.objects.find(object => object.figure_type_id === 3);
+  assert.equal(ball(settled).root_x, 30, 'the ball is a quarter of the way to its next key after 3 of 12 frames');
+});
+
+test('eyes follow the head and the face direction, and mirror with flip', () => {
+  const eyed = {id: 'eve', kind: 'stickman', eyes: true};
+  const {document} = compileSpec({cast: [eyed], keyframes: [
+    {figures: {eve: {x: 0, y: 0, pose: 'stand', face: 'front'}}},
+    {figures: {eve: {face: 'side'}}},
+    {figures: {eve: {pose: 'nod', flip: true}}},
+  ]});
+  assert.equal(document.figure_types[0].segments.length, 14);
+  const eyes = frame => [10, 12].map(index => degrees(frame.objects[0].angles[index]));
+  assert.deepEqual(eyes(document.keyframes[0]), [70, 110], 'front: symmetric about the head');
+  assert.deepEqual(eyes(document.keyframes[1]), [55, 55], 'side: both on the facing side');
+  assert.deepEqual(eyes(document.keyframes[2]), [180 - (POSES.nod.head + 145), 180 - (POSES.nod.head + 145)], 'nodding turns them; flip mirrors');
 });

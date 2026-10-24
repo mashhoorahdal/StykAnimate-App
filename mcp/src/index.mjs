@@ -8,7 +8,7 @@ import {z} from 'zod';
 import {AppSession} from './session.mjs';
 import {buildAnimation} from './build.mjs';
 import {EASINGS} from './spec.mjs';
-import {JOINTS, POSES} from './rig.mjs';
+import {HANDLES, JOINTS, POSES} from './rig.mjs';
 import {GUIDE} from './guide.mjs';
 
 const session = new AppSession();
@@ -25,13 +25,20 @@ const tool = (name, config, handler) => server.registerTool(name, config, args =
 }));
 
 const color = z.string().describe('Hex colour, e.g. "#222222" or "#f80"');
+const jointAngles = z.partialRecord(z.enum(JOINTS), z.number());
 const placement = z.object({
   x: z.number().optional().describe('Horizontal position in canvas pixels (stickman: hip; rect, circle and text: centre; line: start)'),
   y: z.number().optional().describe('Vertical position in canvas pixels (y grows downward)'),
   ground: z.number().optional().describe('Stickman only: stand on this y, placing the lowest point of the pose there (use instead of y)'),
   pose: z.enum(Object.keys(POSES)).optional().describe('Stickman only: a library pose; omit to keep the previous pose'),
-  joints: z.partialRecord(z.enum(JOINTS), z.number()).optional().describe('Stickman only: absolute joint angles in degrees (0 right, 90 down, -90 up, 180 left), applied over the pose'),
+  joints: jointAngles.optional().describe('Stickman only: absolute joint angles in degrees (0 right, 90 down, -90 up, 180 left), applied over the pose'),
+  bend: jointAngles.optional().describe('Stickman only: angle relative to the parent bone (0 = straight on; elbows and knees bend with ±60..120); bones below follow'),
+  turn: jointAngles.optional().describe('Stickman only: rotate a joint by this many degrees, carrying the bones below it'),
   lean: z.number().optional().describe('Stickman only: lean the upper body forward by this many degrees (negative leans back)'),
+  face: z.enum(['front', 'side']).optional().describe('Stickman with eyes: look at the viewer (two eyes) or sideways (one eye, toward the facing side)'),
+  overshoot: z.number().min(0).max(1).optional().describe('Stickman only: swing this fraction past the new pose, then settle back (0.15–0.3 feels natural)'),
+  attach: z.object({to: z.string().describe('Cast id to hold on to'), at: z.enum(Object.keys(HANDLES)).optional().describe('Stickman handle; default rightHand')})
+    .nullable().optional().describe('Hold this figure at another figure\'s hand (or other handle) so it follows exactly; null lets go (then give x/y)'),
   flip: z.boolean().optional().describe('Face left (library poses face right)'),
   scale: z.number().positive().optional(),
   rotate: z.number().optional().describe('Non-stickman figures: rotation in degrees, clockwise'),
@@ -52,6 +59,7 @@ const spec = z.object({
     color: color.optional(),
     thickness: z.number().positive().optional().describe('stickman: line weight multiplier (default 1); line/circle outline: pixels'),
     headColor: color.optional(), headFilled: z.boolean().optional(),
+    eyes: z.boolean().optional().describe('stickman: draw eyes, which show where it is looking (see face)'), eyeColor: color.optional(),
     length: z.number().positive().optional().describe('line: length in pixels'),
     width: z.number().positive().optional().describe('rect: width in pixels'),
     height: z.number().positive().optional().describe('rect: height in pixels'),
@@ -64,7 +72,16 @@ const spec = z.object({
     path: z.string().optional().describe('file: path to a Pivot .stk figure'),
   })).min(1).describe('Every figure in the animation; later members draw on top'),
   keyframes: z.array(z.object({
-    hold: z.number().int().min(1).max(65535).optional().describe('Frames from this keyframe to the next (default 12 = 0.5 s at 24 fps)'),
+    hold: z.number().int().min(1).max(65535).optional().describe('Frames from this keyframe to the next (default 12 = 0.5 s at 24 fps). With walk: how long the closing stand lasts'),
+    settle: z.number().int().min(1).optional().describe('Frames an overshoot takes to settle (default 4)'),
+    walk: z.object({
+      figure: z.string(), to: z.number().describe('Target hip x'),
+      run: z.boolean().optional(), step: z.number().int().min(1).optional().describe('Frames per pose (default 5 walking, 4 running)'),
+      stop: z.boolean().optional().describe('End on a stand (default true)'),
+      joints: jointAngles.optional(), bend: jointAngles.optional(), turn: jointAngles.optional()
+        .describe('Kept through every step, e.g. an arm holding a bag'),
+      face: z.enum(['front', 'side']).optional(),
+    }).optional().describe('Walk or run a stickman to x: expands into a stride-matched cycle facing the way it goes. figures on this keyframe apply at its first step'),
     ease: z.enum(Object.keys(EASINGS)).optional().describe('Motion from this keyframe to the next; constant = no tween (a cut)'),
     background: color.optional(),
     camera: z.object({x: z.number().optional(), y: z.number().optional(), zoom: z.number().positive().optional(), rotate: z.number().optional()})

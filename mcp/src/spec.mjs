@@ -2,7 +2,7 @@
 // StykAnimate document, using the app's own document factories so the result
 // is the same data the editor creates and opens.
 import {appModule} from './app-root.mjs';
-import {JOINTS, POSES, lowestPoint, resolveAngles, segmentAngles} from './rig.mjs';
+import {HANDLES, JOINTS, POSES, RUN_CYCLE, WALK_CYCLE, addEyes, cycleAdvance, handlePositions, lowestPoint, resolveAngles, segmentAngles} from './rig.mjs';
 
 const {defaultFigure, createObject, createFrame, emptyDocument} = await appModule('src/demo.mjs');
 const {validateScene} = await appModule('src/pivot/model.mjs');
@@ -51,6 +51,7 @@ function castDefinition(member, typeId, external) {
         part.thickness = Math.max(1, Math.round(part.thickness * thickness));
       }
       if (member.headFilled) Object.assign(figure.segments[1], {primitive_code: 3, flags: 3, segment_kind: 'circleFill', thickness: 0});
+      if (member.eyes) addEyes(figure, parseColor(member.eyeColor ?? (member.headFilled ? '#ffffff' : member.color ?? '#2b2b2b'), `${member.id}.eyeColor`));
       return figure;
     }
     case 'line':
@@ -77,32 +78,33 @@ function castDefinition(member, typeId, external) {
   }
 }
 
-/** Places one cast member for one keyframe from its accumulated state. */
+/** Places one cast member for one keyframe from its state; returns the object and, for a stickman, its handles. */
 function placeObject(member, figure, uid, state, anchor) {
   const object = createObject(figure, uid, state.x ?? 0, state.y ?? 0);
   object.scale = state.scale ?? 1;
   if (state.opacity !== undefined) object.field28 = Math.round((1 - Math.min(1, Math.max(0, state.opacity))) * 255);
   if (member.kind === 'stickman') {
-    const angles = segmentAngles(figure, state.angles);
+    const angles = segmentAngles(figure, state.angles, {flip: state.flip, face: state.face});
     object.angles = angles;
     if (state.ground !== undefined) object.root_y = state.ground - lowestPoint(figure, angles) * object.scale;
-  } else {
-    const turn = radians(state.rotate ?? 0);
-    object.angles = figure.segments.map(part => (state.flip ? Math.PI - part.angle_rad : part.angle_rad) + turn);
-    if (state.flip) object.image_text_flags = 1;
-    // A circle's root is its bottom; the spec places its centre.
-    if (member.kind === 'circle') object.root_y += figure.segments[0].length / 2 * object.scale;
-    // Text and rectangle roots are not their centres; the spec places the centre, which rotation turns around.
-    if (anchor) {
-      const ax = (state.flip ? -anchor.x : anchor.x) * object.scale, ay = anchor.y * object.scale;
-      object.root_x += ax * Math.cos(turn) - ay * Math.sin(turn);
-      object.root_y += ax * Math.sin(turn) + ay * Math.cos(turn);
-    }
+    return {object, handles: handlePositions(figure, angles, {x: object.root_x, y: object.root_y}, object.scale)};
   }
-  return object;
+  const turn = radians(state.rotate ?? 0);
+  object.angles = figure.segments.map(part => (state.flip ? Math.PI - part.angle_rad : part.angle_rad) + turn);
+  if (state.flip) object.image_text_flags = 1;
+  // A circle's root is its bottom; the spec places its centre.
+  if (member.kind === 'circle') object.root_y += figure.segments[0].length / 2 * object.scale;
+  // Text and rectangle roots are not their centres; the spec places the centre, which rotation turns around.
+  if (anchor) {
+    const ax = (state.flip ? -anchor.x : anchor.x) * object.scale, ay = anchor.y * object.scale;
+    object.root_x += ax * Math.cos(turn) - ay * Math.sin(turn);
+    object.root_y += ax * Math.sin(turn) + ay * Math.cos(turn);
+  }
+  return {object, handles: new Map([[0, {x: object.root_x, y: object.root_y}]])};
 }
 
-const PLACEMENT_KEYS = ['x', 'y', 'ground', 'scale', 'rotate', 'flip', 'opacity'];
+const PLACEMENT_KEYS = ['x', 'y', 'ground', 'scale', 'rotate', 'flip', 'opacity', 'face'];
+const NUMERIC_KEYS = ['x', 'y', 'ground', 'scale', 'rotate', 'opacity'];
 
 /** The next state of a cast member: unspecified fields carry over from the previous keyframe. */
 function nextState(member, previous, change) {
@@ -110,17 +112,44 @@ function nextState(member, previous, change) {
   for (const key of PLACEMENT_KEYS) if (change[key] !== undefined) state[key] = change[key];
   if (change.y !== undefined && change.ground === undefined) delete state.ground;
   if (change.ground !== undefined && change.y === undefined) delete state.y;
-  if (member.kind === 'stickman' && (change.pose !== undefined || change.joints || change.lean || change.flip !== undefined || !previous.angles)) {
-    const flip = state.flip ?? false;
-    // A new pose starts from its library angles; joints alone adjust the previous pose.
-    if (change.pose !== undefined || !previous.angles) state.angles = resolveAngles({pose: change.pose ?? 'stand', joints: change.joints, lean: change.lean, flip});
-    else {
-      const unflipped = previous.flip ? Object.fromEntries(JOINTS.map(joint => [joint, 180 - previous.angles[joint]])) : previous.angles;
-      state.angles = resolveAngles({pose: null, joints: change.joints, lean: change.lean, flip}, unflipped);
-    }
-  }
+  if ('attach' in change) state.attach = change.attach ?? null;
+  if (member.kind !== 'stickman') return state;
+  const adjust = {joints: change.joints, bend: change.bend, turn: change.turn, lean: change.lean};
+  // A new pose starts from its library angles; joints, bend, turn and lean alone adjust the previous pose.
+  if (change.pose !== undefined || !previous.angles) state.angles = resolveAngles({pose: change.pose ?? 'stand', ...adjust});
+  else if (adjust.joints || adjust.bend || adjust.turn || adjust.lean) state.angles = resolveAngles({pose: null, ...adjust}, previous.angles);
   return state;
 }
+
+/** Expands a walk or run keyframe into one keyframe per pose of the cycle, ending on a stand. */
+function expandWalk(key, index, cast, figures, states) {
+  const {figure: id, to, run = false, step = run ? 4 : 5, stop = true, joints, bend, turn, face = 'side'} = key.walk;
+  const member = cast.find(entry => entry.id === id), state = states.get(id);
+  if (member?.kind !== 'stickman') throw new Error(`keyframes[${index}].walk.figure must name a stickman in the cast`);
+  if (state?.x === undefined) throw new Error(`keyframes[${index}]: place "${id}" in an earlier keyframe before it walks`);
+  if (!Number.isFinite(to)) throw new Error(`keyframes[${index}].walk.to must be an x position`);
+  if (!Number.isInteger(step) || step < 1) throw new Error(`keyframes[${index}].walk.step must be a whole number of frames`);
+  const cycle = run ? RUN_CYCLE : WALK_CYCLE, distance = to - state.x;
+  const advance = cycleAdvance(figures.get(id), cycle[0], state.scale ?? 1);
+  const count = Math.max(1, Math.round(Math.abs(distance) / advance)), flip = distance === 0 ? state.flip : distance < 0;
+  const keys = Array.from({length: count}, (_, i) => ({hold: step, ease: 'linear',
+    figures: {...(i === 0 ? key.figures : {}), [id]: {x: state.x + distance * (i + 1) / count, pose: cycle[(i + 1) % cycle.length], flip, joints, bend, turn, face}},
+    ...(i === 0 ? {camera: key.camera, background: key.background} : {})}));
+  if (stop) keys.push({hold: key.hold ?? 6, ease: key.ease, figures: {[id]: {pose: 'stand', joints, bend, turn}}});
+  return keys;
+}
+
+const shortest = degrees => ((degrees + 540) % 360) - 180;
+/** A state between two states of the same figure: numbers and joint angles interpolate, everything else holds. */
+function lerpState(a, b, t) {
+  if (!b) return a;
+  const state = {...a};
+  for (const key of NUMERIC_KEYS) if (Number.isFinite(a[key]) && Number.isFinite(b[key])) state[key] = a[key] + (b[key] - a[key]) * t;
+  if (a.angles && b.angles && a.flip === b.flip)
+    state.angles = Object.fromEntries(JOINTS.map(joint => [joint, a.angles[joint] + shortest(b.angles[joint] - a.angles[joint]) * t]));
+  return state;
+}
+const lerpCamera = (a, b, t) => a && b ? Object.fromEntries(['x', 'y', 'zoom', 'rotate'].map(key => [key, (a[key] ?? 0) + ((b[key] ?? 0) - (a[key] ?? 0)) * t])) : a;
 
 /**
  * Compiles a spec into a document. `external` maps a text or file cast id to {figure, anchor?}: its prepared
@@ -143,9 +172,41 @@ export function compileSpec(spec, external = new Map()) {
   document._styk.name = spec.title ?? 'Untitled animation';
   document.figure_types = cast.map((member, index) => castDefinition(member, index + 1, external));
   const figures = new Map(cast.map((member, index) => [member.id, document.figure_types[index]]));
+  const members = new Map(cast.map(member => [member.id, member]));
   const uids = new Map(cast.map((member, index) => [member.id, index + 1]));
   const anchors = new Map(cast.map(member => [member.id, member.kind === 'rect' ? rectAnchor(figures.get(member.id)) : external.get(member.id)?.anchor]));
 
+  // 1. Resolve every keyframe (walks expanded) into the full state of each visible figure.
+  const states = new Map(), visible = new Set(), records = [];
+  let background = spec.background ?? '#ffffff', camera = null;
+  const resolve = (key, index) => {
+    const hold = key.hold ?? 12;
+    if (!Number.isInteger(hold) || hold < 1 || hold > 65535) throw new Error(`keyframes[${index}].hold must be a whole number of frames from 1 to 65535`);
+    const overshoot = new Map();
+    for (const [id, change] of Object.entries(key.figures ?? {})) {
+      const member = members.get(id);
+      if (!member) throw new Error(`keyframes[${index}] names "${id}", which is not in the cast`);
+      if (change.hide) { visible.delete(id); continue; }
+      states.set(id, nextState(member, states.get(id) ?? {}, change));
+      visible.add(id);
+      if (change.overshoot) {
+        if (member.kind !== 'stickman') throw new Error(`keyframes[${index}].figures.${id}.overshoot applies to stickmen`);
+        overshoot.set(id, change.overshoot);
+      }
+    }
+    if (key.background) background = key.background;
+    if (key.camera) camera = {x: width / 2, y: height / 2, zoom: 1, rotate: 0, ...camera, ...key.camera};
+    const ease = key.ease ?? spec.ease ?? 'auto';
+    if (!EASINGS[ease]) throw new Error(`keyframes[${index}].ease must be one of ${Object.keys(EASINGS).join(', ')}`);
+    records.push({index, hold, ease, background, camera, overshoot, settle: key.settle,
+      states: new Map([...visible].map(id => [id, states.get(id)]))});
+  };
+  spec.keyframes.forEach((key, index) => {
+    if (key.walk) for (const expanded of expandWalk(key, index, cast, figures, states)) resolve(expanded, index);
+    else resolve(key, index);
+  });
+
+  // 2. Turn records into frames. Overshoot passes the pose and settles back, while everything else keeps moving.
   const backgrounds = new Map();
   const backgroundId = color => {
     const [r, g, b] = parseColor(color, 'background');
@@ -153,32 +214,45 @@ export function compileSpec(spec, external = new Map()) {
     if (!backgrounds.has(argb)) backgrounds.set(argb, {background_id: backgrounds.size + 1, kind: 2, color: argb, name: `Color ${color}`});
     return backgrounds.get(argb).background_id;
   };
-
-  const states = new Map(), visible = new Set();
-  let background = spec.background ?? '#ffffff', camera = null, ticks = 0;
-  const frames = spec.keyframes.map((key, index) => {
-    const hold = key.hold ?? 12;
-    if (!Number.isInteger(hold) || hold < 1 || hold > 65535) throw new Error(`keyframes[${index}].hold must be a whole number of frames from 1 to 65535`);
-    for (const [id, change] of Object.entries(key.figures ?? {})) {
-      const member = cast.find(entry => entry.id === id);
-      if (!member) throw new Error(`keyframes[${index}] names "${id}", which is not in the cast`);
-      if (change.hide) { visible.delete(id); continue; }
-      states.set(id, nextState(member, states.get(id) ?? {}, change));
-      visible.add(id);
+  const frame = (record, stateMap, cameraState, hold) => {
+    const placed = cast.filter(member => stateMap.has(member.id)).map(member =>
+      ({member, ...placeObject(member, figures.get(member.id), uids.get(member.id), stateMap.get(member.id), anchors.get(member.id))}));
+    const slots = new Map(placed.map((entry, slot) => [entry.member.id, slot]));
+    for (const {member, object} of placed) {
+      const attach = stateMap.get(member.id).attach;
+      if (!attach) continue;
+      const target = placed[slots.get(attach.to)];
+      if (!target) throw new Error(`keyframes[${record.index}]: "${member.id}" is attached to "${attach.to}", which is not on stage`);
+      if (attach.to === member.id) throw new Error(`keyframes[${record.index}]: "${member.id}" cannot attach to itself`);
+      const handle = target.member.kind === 'stickman' ? HANDLES[attach.at ?? 'rightHand'] : 0;
+      if (handle === undefined) throw new Error(`keyframes[${record.index}]: unknown attach point "${attach.at}". Use ${Object.keys(HANDLES).join(', ')}`);
+      // The app evaluates a joined figure's root at the target's handle on every frame.
+      object.join = {target_object_slot: slots.get(attach.to), target_unique_id: target.object.unique_id, target_handle_id: handle};
+      ({x: object.root_x, y: object.root_y} = target.handles.get(handle));
     }
-    if (key.background) background = key.background;
-    if (key.camera) camera = {...camera, ...key.camera};
-    const objects = cast.filter(member => visible.has(member.id))
-      .map(member => placeObject(member, figures.get(member.id), uids.get(member.id), states.get(member.id), anchors.get(member.id)));
-    const frame = createFrame(objects, hold);
-    const easing = EASINGS[key.ease ?? spec.ease ?? 'auto'];
-    if (!easing) throw new Error(`keyframes[${index}].ease must be one of ${Object.keys(EASINGS).join(', ')}`);
-    frame._styk = {easing: structuredClone(easing)};
-    frame.background_id = backgroundId(background);
-    if (camera) frame.camera = {is_default: false, x: (camera.x ?? width / 2) - width / 2, y: (camera.y ?? height / 2) - height / 2,
-      scale: 1 / (camera.zoom ?? 1), angle_rad: radians(camera.rotate ?? 0)};
-    ticks += hold;
-    return frame;
+    const result = createFrame(placed.map(entry => entry.object), hold);
+    result._styk = {easing: structuredClone(EASINGS[record.ease])};
+    result.background_id = backgroundId(record.background);
+    if (cameraState) result.camera = {is_default: false, x: cameraState.x - width / 2, y: cameraState.y - height / 2,
+      scale: 1 / cameraState.zoom, angle_rad: radians(cameraState.rotate)};
+    return result;
+  };
+  const frames = [];
+  let ticks = 0;
+  records.forEach((record, i) => {
+    ticks += record.hold;
+    const previous = records[i - 1], next = records[i + 1], settle = Math.min(record.settle ?? 4, record.hold - 1);
+    if (!record.overshoot.size || settle < 1) { frames.push(frame(record, record.states, record.camera, record.hold)); return; }
+    const passed = new Map(record.states);
+    for (const [id, amount] of record.overshoot) {
+      const target = record.states.get(id), before = previous?.states.get(id);
+      if (!before?.angles || before.flip !== target.flip) continue;
+      passed.set(id, {...target, angles: Object.fromEntries(JOINTS.map(joint =>
+        [joint, target.angles[joint] + shortest(target.angles[joint] - before.angles[joint]) * amount]))});
+    }
+    frames.push(frame(record, passed, record.camera, settle));
+    const t = settle / record.hold, settled = new Map([...record.states].map(([id, state]) => [id, lerpState(state, next?.states.get(id), next ? t : 0)]));
+    frames.push(frame(record, settled, next ? lerpCamera(record.camera, next.camera, t) : record.camera, record.hold - settle));
   });
   // The last keyframe holds for its own length: a closing copy marks where it ends.
   const closing = structuredClone(frames.at(-1));

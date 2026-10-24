@@ -25,6 +25,16 @@ A spec declares the figures once (stickmen, lines, rectangles, circles, text and
 keyframes that only say what changes. Keyframes tween with the app's easing modes. Each one can also
 move the camera or change the background. `stykanimate_guide` returns the full format.
 
+Tools for natural motion:
+
+- `walk` keyframes expand into a stride-matched walk or run cycle that faces the way it travels and ends on a stand,
+  so feet don't slide.
+- `attach` holds a prop on a stickman's hand (or another handle) with an app join, so it follows every frame.
+- `bend` and `turn` pose joints relative to their parent bone, and the bones below follow.
+- `overshoot` swings past a pose and settles, while other figures keep moving through the settle.
+- `eyes` and `face` show where a stickman is looking.
+- A pose library of about forty poses, including talk, nod, reach, pick up, knock and bow.
+
 ## How it works
 
 | Module | Responsibility |

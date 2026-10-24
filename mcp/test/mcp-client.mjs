@@ -23,9 +23,12 @@ try {
   const {tools} = await client.listTools();
   console.log('tools', tools.map(tool => tool.name).join(', '));
   assert.match((await call('stykanimate_guide')).content[0].text, /Pose library/);
-  const spec = {title: 'Tone test', cast: [{id: 'floor', kind: 'line', length: 540}, {id: 'bob', kind: 'stickman'}],
-    keyframes: [{hold: 12, figures: {floor: {x: 0, y: 760}, bob: {x: 150, ground: 760, pose: 'stand', scale: 1.3}}},
-      {hold: 12, figures: {bob: {pose: 'wave_a'}}}],
+  const spec = {title: 'Tone test', cast: [{id: 'floor', kind: 'rect', width: 540, height: 200}, {id: 'bob', kind: 'stickman', eyes: true},
+    {id: 'bag', kind: 'rect', width: 40, height: 52, color: '#e9c79a'}],
+    keyframes: [{hold: 12, figures: {floor: {x: 270, y: 860}, bob: {x: 150, ground: 760, pose: 'stand', scale: 1.3, face: 'front'},
+      bag: {attach: {to: 'bob', at: 'rightHand'}}}},
+      {walk: {figure: 'bob', to: 350, joints: {rightUpperArm: 80, rightForearm: 88}}, hold: 6},
+      {hold: 12, figures: {bob: {pose: 'wave_a', face: 'front', overshoot: 0.2}}}],
     audio: [{path: path.join(out, 'tone.wav'), start: 0.5}]};
   const built = JSON.parse((await call('build_animation', {spec, saveProject: path.join(out, 'tone.styk')})).content[0].text);
   console.log('built', built);
